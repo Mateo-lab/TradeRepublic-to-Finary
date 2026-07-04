@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 
 from .parser_tr import parse_tr_csv, filter_trading, filter_dividends
-from .aggregator import aggregate_positions
-from .finary_sync import sync_positions_to_finary
+from .aggregator import aggregate_positions, compute_cash_balance
+from .finary_sync import sync_positions_to_finary, sync_cash_to_finary
 from .sync_state import load_state, save_state, SyncState
 from .ui import (
     console, print_banner, print_step, print_success, print_error,
@@ -42,6 +42,8 @@ Examples:
     parser.add_argument("--parse-only", action="store_true", help="Only show transactions")
     parser.add_argument("--trades-only", action="store_true", help="Filter to BUY/SELL only")
     parser.add_argument("--reset", action="store_true", help="Reset sync state")
+    parser.add_argument("--sync-cash", action="store_true", help="Also sync cash balance")
+    parser.add_argument("--cash-account", default="Trade Republic Cash", help="Finary cash account name")
     parser.add_argument("--yes", "-y", action="store_true", help="Auto-approve all changes")
 
     args = parser.parse_args()
@@ -126,6 +128,17 @@ Examples:
         dry_run=not args.execute,
         auto_confirm=args.yes,
     )
+
+    # Cash balance sync
+    if args.sync_cash:
+        print_step(5, "Cash balance")
+        cash = compute_cash_balance(transactions)
+        print_info(f"Computed cash balance: {cash:.2f} EUR")
+        sync_cash_to_finary(
+            cash,
+            account_name=args.cash_account,
+            dry_run=not args.execute,
+        )
 
     if args.execute:
         save_state(state, state_dir)

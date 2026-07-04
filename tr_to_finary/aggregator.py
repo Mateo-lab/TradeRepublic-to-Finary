@@ -96,3 +96,11 @@ def aggregate_positions(transactions: list[Transaction]) -> list[Position]:
         ))
 
     return sorted(result, key=lambda p: p.name)
+
+
+def compute_cash_balance(transactions: list[Transaction]) -> float:
+    """Compute the net cash balance from all transactions."""
+    balance = 0.0
+    for tx in transactions:
+        balance += tx.amount
+    return round(balance, 2)

@@ -13,7 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .parser_tr import parse_tr_csv, filter_trading, filter_dividends, Transaction
-from .aggregator import aggregate_positions, Position
+from .aggregator import aggregate_positions, compute_cash_balance, Position
 from .sync_state import load_state, save_state, SyncState
 
 # ── App ──
@@ -30,6 +30,7 @@ _session: dict = {
     "new_tx_ids": set(),
     "csv_path": None,
     "account_name": "Trade Republic",
+    "cash_balance": 0.0,
 }
 
 
@@ -125,6 +126,7 @@ async def api_status():
         "synced_count": len(state.synced_transaction_ids),
         "last_sync": state.last_sync,
         "account": state.finary_account,
+        "cash_balance": _session.get("cash_balance", 0.0),
     }
 
 
@@ -183,11 +185,14 @@ def _process_csv(csv_path: Path) -> dict:
 
     changed = [p for p in positions if any(tid in new_tx_ids for tid in p.transaction_ids)]
 
+    cash_balance = compute_cash_balance(transactions)
+
     # Store in session
     _session["transactions"] = transactions
     _session["positions"] = positions
     _session["new_tx_ids"] = new_tx_ids
     _session["csv_path"] = csv_path
+    _session["cash_balance"] = cash_balance
 
     return {
         "total_transactions": len(transactions),
@@ -198,6 +203,7 @@ def _process_csv(csv_path: Path) -> dict:
         "new_tx_count": len(new_tx_ids),
         "changed_count": len(changed),
         "already_synced": len(state.synced_transaction_ids),
+        "cash_balance": cash_balance,
     }
 
 
@@ -313,13 +319,39 @@ async def api_sync(body: dict = {}):
                 logs.append(f"[ERR] Failed to create {pos.name}: {e}")
                 errors += 1
 
+    # Sync cash balance
+    sync_cash = body.get("sync_cash", True)
+    cash_balance = _session.get("cash_balance", 0.0)
+    cash_account = body.get("cash_account", "Trade Republic Cash")
+
+    if sync_cash and cash_balance != 0:
+        try:
+            from finary_uapi.user_holdings_accounts import (
+                get_holdings_account_per_name_or_id as get_account,
+                add_checking_saving_account,
+                update_holdings_account,
+            )
+
+            cash_acc = get_account(session, cash_account)
+            if cash_acc:
+                update_holdings_account(session, cash_acc["id"], cash_account, balance=cash_balance)
+                logs.append(f"[OK] Updated cash: {cash_balance:.2f} EUR")
+            else:
+                add_checking_saving_account(
+                    session, cash_account, "Trade Republic", "checking", cash_balance,
+                )
+                logs.append(f"[OK] Created cash account '{cash_account}': {cash_balance:.2f} EUR")
+        except Exception as e:
+            logs.append(f"[WARN] Cash sync failed: {e}")
+
     state.finary_account = account_name
     save_state(state, _state_dir())
     logs.append(f"[OK] State saved ({len(state.synced_transaction_ids)} txs tracked)")
 
     _session["new_tx_ids"] = set()
 
-    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors, "logs": logs}
+    return {"created": created, "updated": updated, "skipped": skipped, "errors": errors,
+            "logs": logs, "cash_balance": cash_balance}
 
 
 # ── API: Settings ──

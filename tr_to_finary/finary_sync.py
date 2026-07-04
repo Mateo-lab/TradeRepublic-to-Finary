@@ -214,3 +214,37 @@ def sync_positions_to_finary(
     state.finary_account = account_name
     console.print()
     print_sync_summary(created, updated, skipped, errors)
+
+
+def sync_cash_to_finary(
+    cash_balance: float,
+    session=None,
+    account_name: str = "Trade Republic Cash",
+    dry_run: bool = True,
+):
+    """Sync the computed cash balance to a Finary checking/savings account."""
+    if dry_run:
+        console.print(f"\n  [bold yellow]DRY RUN[/] Cash balance: [bold]{cash_balance:.2f} EUR[/]")
+        console.print(f"  Would update account [bold]{account_name}[/]")
+        return
+
+    from finary_uapi.user_holdings_accounts import (
+        get_holdings_account_per_name_or_id,
+        add_checking_saving_account,
+        update_holdings_account,
+    )
+
+    if session is None:
+        session = _finary_signin()
+        if session is None:
+            return
+
+    account = get_holdings_account_per_name_or_id(session, account_name)
+    if account:
+        update_holdings_account(session, account["id"], account_name, balance=cash_balance)
+        print_success(f"Updated cash balance: {cash_balance:.2f} EUR")
+    else:
+        add_checking_saving_account(
+            session, account_name, "Trade Republic", "checking", cash_balance,
+        )
+        print_success(f"Created cash account '{account_name}' with {cash_balance:.2f} EUR")

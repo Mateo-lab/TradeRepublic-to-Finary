@@ -146,11 +146,14 @@ function showPreview(data) {
     // Stats
     const stats = $("#preview-stats");
     if (stats) {
+        const cashHtml = data.cash_balance != null
+            ? `<div class="stat"><div class="stat-label">Cash Balance</div><div class="stat-value green">${num(data.cash_balance)} &euro;</div></div>`
+            : '';
         stats.innerHTML = `
             <div class="stat"><div class="stat-label">Transactions</div><div class="stat-value">${data.total_transactions}</div></div>
             <div class="stat"><div class="stat-label">Positions</div><div class="stat-value primary">${data.positions.length}</div></div>
             <div class="stat"><div class="stat-label">New TXs</div><div class="stat-value green">${data.new_tx_count}</div></div>
-            <div class="stat"><div class="stat-label">To Sync</div><div class="stat-value">${data.changed_count}</div></div>
+            ${cashHtml}
         `;
     }
 
@@ -463,6 +466,7 @@ async function loadDashboard() {
             }
         }
         if ($("#dash-account")) $("#dash-account").textContent = data.account || "-";
+        if ($("#dash-cash")) $("#dash-cash").textContent = data.cash_balance != null ? num(data.cash_balance) : "-";
 
         // Update status dot
         const dot = $("#status-dot");
