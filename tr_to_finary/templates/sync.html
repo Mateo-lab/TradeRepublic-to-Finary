@@ -110,9 +110,15 @@
     </div>
 
     <div class="card" style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:1rem">
-        <div class="form-group" style="margin-bottom:0">
-            <label for="sync-account">Finary account</label>
-            <input type="text" id="sync-account" value="Trade Republic" style="width:220px">
+        <div style="display:flex;gap:1.5rem;align-items:end;flex-wrap:wrap">
+            <div class="form-group" style="margin-bottom:0">
+                <label for="sync-account">Finary account</label>
+                <input type="text" id="sync-account" value="Trade Republic" style="width:220px">
+            </div>
+            <label style="display:flex;align-items:center;gap:.4rem;font-size:.85rem;cursor:pointer">
+                <input type="checkbox" id="sync-cash-toggle" checked>
+                Sync cash balance
+            </label>
         </div>
         <div class="btn-group">
             <button class="btn" onclick="resetFlow()">&#8592; Back</button>
@@ -132,6 +138,19 @@
             <h2><span class="card-icon">&#128295;</span> Sync Log</h2>
         </div>
         <div class="log" id="sync-log"></div>
+
+        <!-- 2FA OTP input (shown when needed) -->
+        <div id="sync-otp-section" style="display:none;margin-top:1rem;padding:1rem;border-top:1px solid var(--border)">
+            <div style="display:flex;gap:.5rem;align-items:end">
+                <div class="form-group" style="margin-bottom:0;flex:1;max-width:220px">
+                    <label for="sync-otp-code">2FA Code (TOTP)</label>
+                    <input type="text" id="sync-otp-code" placeholder="123456" maxlength="6"
+                           style="letter-spacing:4px;font-weight:600;text-align:center"
+                           onkeydown="if(event.key==='Enter')submitSyncOTP()">
+                </div>
+                <button class="btn btn-primary" onclick="submitSyncOTP()">Verify &amp; Sync</button>
+            </div>
+        </div>
     </div>
 
     <div class="btn-group" style="margin-top:1rem">

@@ -14,6 +14,7 @@
         <button class="btn btn-sm {% if filter == 'all' %}btn-primary{% endif %}" onclick="location.href='/transactions'">All ({{ counts.all }})</button>
         <button class="btn btn-sm {% if filter == 'trading' %}btn-primary{% endif %}" onclick="location.href='/transactions?filter=trading'">Trades ({{ counts.trading }})</button>
         <button class="btn btn-sm {% if filter == 'dividends' %}btn-primary{% endif %}" onclick="location.href='/transactions?filter=dividends'">Dividends ({{ counts.dividends }})</button>
+        <button class="btn btn-sm {% if filter == 'cash' %}btn-primary{% endif %}" onclick="location.href='/transactions?filter=cash'">Cash ({{ counts.cash }})</button>
     </div>
 </div>
 

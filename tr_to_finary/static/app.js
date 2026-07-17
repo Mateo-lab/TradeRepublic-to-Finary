@@ -207,7 +207,7 @@ function showPreview(data) {
     show($("#section-preview"));
 
     const syncBtn = $("#btn-sync");
-    if (syncBtn) syncBtn.disabled = data.changed_count === 0;
+    if (syncBtn) syncBtn.disabled = data.changed_count === 0 && !data.cash_balance;
 }
 
 // ── Tabs (transactions view) ──
@@ -219,28 +219,44 @@ function switchTab(tabName) {
 }
 
 // ── Sync ──
-async function executeSync() {
-    if (!previewData) return;
+async function executeSync(otpCode = null) {
+    if (!previewData && !otpCode) return;
 
-    setStep(3);
-    hide($("#section-preview"));
-    show($("#section-sync"));
-    clearLog();
-    addLog("Connecting to Finary...", "line-info");
+    if (!otpCode) {
+        setStep(3);
+        hide($("#section-preview"));
+        show($("#section-sync"));
+        clearLog();
+        addLog("Connecting to Finary...", "line-info");
+    }
+
+    hide($("#sync-otp-section"));
 
     const btn = $("#btn-sync-exec");
     if (btn) { btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> Syncing...'; }
 
     const account = $("#sync-account")?.value || "Trade Republic";
+    const syncCash = $("#sync-cash-toggle")?.checked ?? true;
+    const payload = { account_name: account, sync_cash: syncCash };
+    if (otpCode) payload.otp_code = otpCode;
 
     try {
         const resp = await fetch(`${API}/api/sync`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ account_name: account }),
+            body: JSON.stringify(payload),
         });
         const data = await resp.json();
         if (!resp.ok) throw new Error(data.detail || "Sync failed");
+
+        if (data.needs_otp) {
+            addLog("[INFO] 2FA required — enter your code below", "line-warn");
+            show($("#sync-otp-section"));
+            const otpInput = $("#sync-otp-code");
+            if (otpInput) { otpInput.value = ""; otpInput.focus(); }
+            if (btn) { btn.disabled = false; btn.innerHTML = '<span class="btn-icon">&#9889;</span> Sync to Finary'; }
+            return;
+        }
 
         for (const log of (data.logs || [])) {
             const cls = log.startsWith("[OK]") ? "line-ok"
@@ -269,6 +285,13 @@ async function executeSync() {
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = '<span class="btn-icon">&#9889;</span> Sync to Finary'; }
     }
+}
+
+function submitSyncOTP() {
+    const otp = $("#sync-otp-code")?.value?.trim();
+    if (!otp) return;
+    addLog("[INFO] Verifying 2FA code...", "line-info");
+    executeSync(otp);
 }
 
 function resetFlow() {
@@ -480,8 +503,16 @@ async function loadDashboard() {
     } catch {}
 }
 
+// ── Heartbeat (auto-shutdown server when page closes) ──
+function startHeartbeat() {
+    const ping = () => fetch(`${API}/api/heartbeat`, { method: "POST" }).catch(() => {});
+    ping();
+    setInterval(ping, 5000);
+}
+
 // ── Init ──
 document.addEventListener("DOMContentLoaded", () => {
+    startHeartbeat();
     initUpload();
     const page = document.body.dataset.page;
     if (page === "dashboard") loadDashboard();
