@@ -1,8 +1,13 @@
 """Web UI for TR to Finary sync."""
 
+import asyncio
 import json
+import os
 import shutil
+import signal
 import tempfile
+import time
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from pathlib import Path
 
@@ -16,8 +21,36 @@ from .parser_tr import parse_tr_csv, filter_trading, filter_dividends, Transacti
 from .aggregator import aggregate_positions, compute_cash_balance, Position
 from .sync_state import load_state, save_state, SyncState
 
+# ── Heartbeat: auto-shutdown when browser closes ──
+_last_heartbeat: float = 0.0
+_HEARTBEAT_TIMEOUT = 10  # seconds without ping before shutdown
+
+
+async def _heartbeat_watchdog():
+    """Background task that shuts down the server if no heartbeat is received."""
+    global _last_heartbeat
+    _last_heartbeat = time.time()
+    await asyncio.sleep(_HEARTBEAT_TIMEOUT)
+    while True:
+        elapsed = time.time() - _last_heartbeat
+        if elapsed > _HEARTBEAT_TIMEOUT:
+            print(f"\n  [auto-shutdown] No browser connected for {_HEARTBEAT_TIMEOUT}s. Stopping server.")
+            os.kill(os.getpid(), signal.SIGTERM)
+            return
+        await asyncio.sleep(3)
+
+
+# ── Lifespan: auto-load CSV + heartbeat watchdog ──
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    _auto_load_csv()
+    task = asyncio.create_task(_heartbeat_watchdog())
+    yield
+    task.cancel()
+
+
 # ── App ──
-app = FastAPI(title="TR to Finary")
+app = FastAPI(title="TR to Finary", lifespan=lifespan)
 
 BASE_DIR = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
@@ -88,16 +121,22 @@ async def page_sync(request: Request):
 async def page_transactions(request: Request, filter: str = "all"):
     transactions = _session.get("transactions", [])
 
+    cash_types = ("CUSTOMER_INBOUND", "CUSTOMER_OUTBOUND", "INTEREST_PAYMENT", "TAX", "TAX_REFUND")
+    cash_txs = [tx for tx in transactions if tx.type in cash_types]
+
     counts = {
         "all": len(transactions),
         "trading": len(filter_trading(transactions)),
         "dividends": len(filter_dividends(transactions)),
+        "cash": len(cash_txs),
     }
 
     if filter == "trading":
         display = filter_trading(transactions)
     elif filter == "dividends":
         display = filter_dividends(transactions)
+    elif filter == "cash":
+        display = cash_txs
     else:
         display = transactions
 
@@ -116,6 +155,14 @@ async def page_settings(request: Request):
         "request": request,
         "page": "settings",
     })
+
+
+# ── API: Heartbeat ──
+@app.post("/api/heartbeat")
+async def api_heartbeat():
+    global _last_heartbeat
+    _last_heartbeat = time.time()
+    return {"ok": True}
 
 
 # ── API: Status ──
@@ -213,12 +260,15 @@ async def api_sync(body: dict = {}):
     positions = _session.get("positions", [])
     new_tx_ids = _session.get("new_tx_ids", set())
 
+    sync_cash = body.get("sync_cash", True)
+    cash_balance = _session.get("cash_balance", 0.0)
+
     if not positions:
         raise HTTPException(400, "No data loaded. Upload a CSV or fetch from TR first.")
 
-    if not new_tx_ids:
+    if not new_tx_ids and not (sync_cash and cash_balance != 0):
         return {"created": 0, "updated": 0, "skipped": 0, "errors": 0,
-                "logs": ["All transactions already synced."]}
+                "logs": ["All transactions already synced. Cash unchanged."]}
 
     account_name = body.get("account_name", _session.get("account_name", "Trade Republic"))
     _session["account_name"] = account_name
@@ -231,22 +281,31 @@ async def api_sync(body: dict = {}):
             get_holdings_account_per_name_or_id, add_holdings_account,
         )
         from finary_uapi.securities import guess_security
+        from finary_uapi.user_cryptos import update_user_crypto_by_code
     except ImportError:
         raise HTTPException(400, "finary-uapi is not installed. Run: pip install finary-uapi")
 
     logs: list[str] = []
+    otp_code = body.get("otp_code")
 
-    # Sign in
+    # Sign in (with optional OTP)
     try:
-        result = signin()
+        if otp_code:
+            result = signin(otp_code=otp_code)
+        else:
+            result = signin()
     except RuntimeError as e:
         if "OTP" in str(e):
-            raise HTTPException(400,
-                "Finary requires 2FA. Sign in via CLI first: python -m tr_to_finary.cli --setup")
+            return {"created": 0, "updated": 0, "skipped": 0, "errors": 0,
+                    "logs": [], "needs_otp": True}
         raise HTTPException(400, f"Sign in failed: {e}")
 
     status = result.get("response", {}).get("status", "")
     if status != "complete":
+        errors_list = result.get("errors", [])
+        if errors_list:
+            msgs = ", ".join(e.get("long_message", str(e)) for e in errors_list)
+            raise HTTPException(400, f"Sign in failed: {msgs}")
         raise HTTPException(400, f"Sign in failed (status: {status})")
 
     session = prepare_session()
@@ -274,6 +333,24 @@ async def api_sync(body: dict = {}):
 
     for pos in positions:
         if not any(tid in new_tx_ids for tid in pos.transaction_ids):
+            continue
+
+        # Crypto assets (TR uses XF000{CODE}00XX ISINs)
+        is_crypto = pos.isin and pos.isin.startswith("XF000")
+        if is_crypto:
+            crypto_code = pos.isin[5:8]
+            try:
+                update_user_crypto_by_code(
+                    session, crypto_code, pos.quantity, pos.average_buy_price, account_id,
+                )
+                logs.append(f"[OK] Synced crypto {pos.name} ({crypto_code}, qty: {pos.quantity:.6f})")
+                created += 1
+                for tid in pos.transaction_ids:
+                    if tid in new_tx_ids:
+                        state.mark_synced(tid)
+            except Exception as e:
+                logs.append(f"[ERR] Failed to sync crypto {pos.name}: {e}")
+                errors += 1
             continue
 
         if pos.isin in existing_by_isin:
@@ -320,8 +397,6 @@ async def api_sync(body: dict = {}):
                 errors += 1
 
     # Sync cash balance
-    sync_cash = body.get("sync_cash", True)
-    cash_balance = _session.get("cash_balance", 0.0)
     cash_account = body.get("cash_account", "Trade Republic Cash")
 
     if sync_cash and cash_balance != 0:
@@ -443,6 +518,36 @@ async def api_reset():
     save_state(SyncState(), _state_dir())
     _session.update({"new_tx_ids": set(), "positions": [], "transactions": []})
     return {"ok": True}
+
+
+def _auto_load_csv():
+    """Find and parse an existing CSV in the working directory for data persistence."""
+    cwd = Path(".")
+    candidates = [
+        "tr_transactions.csv",
+        "Exportation de transactions.csv",
+    ]
+
+    csv_path = None
+    for name in candidates:
+        p = cwd / name
+        if p.exists():
+            csv_path = p
+            break
+
+    if csv_path is None:
+        csvs = sorted(cwd.glob("*.csv"), key=lambda f: f.stat().st_mtime, reverse=True)
+        if csvs:
+            csv_path = csvs[0]
+
+    if csv_path is None:
+        return
+
+    try:
+        _process_csv(csv_path)
+        print(f"  [startup] Loaded {csv_path.name} ({len(_session['transactions'])} transactions, {len(_session['positions'])} positions)")
+    except Exception as e:
+        print(f"  [startup] Failed to load {csv_path.name}: {e}")
 
 
 # ── Entry point ──

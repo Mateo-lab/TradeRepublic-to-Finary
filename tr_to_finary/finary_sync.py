@@ -92,6 +92,7 @@ def sync_positions_to_finary(
             add_holdings_account,
         )
         from finary_uapi.securities import guess_security
+        from finary_uapi.user_cryptos import update_user_crypto_by_code
     except ImportError:
         print_error("finary-uapi is not installed.")
         console.print("  Run: [bold cyan]pip install finary-uapi[/]")
@@ -132,6 +133,23 @@ def sync_positions_to_finary(
     for pos in positions:
         has_changes = any(tid in new_tx_ids for tid in pos.transaction_ids)
         if not has_changes:
+            continue
+
+        # Crypto assets (TR uses XF000{CODE}00XX ISINs)
+        if pos.isin and pos.isin.startswith("XF000"):
+            crypto_code = pos.isin[5:8]
+            try:
+                update_user_crypto_by_code(
+                    session, crypto_code, pos.quantity, pos.average_buy_price, account_id,
+                )
+                print_success(f"Synced crypto {pos.name} ({crypto_code}, qty: {pos.quantity:.6f})")
+                created += 1
+                for tid in pos.transaction_ids:
+                    if tid in new_tx_ids:
+                        state.mark_synced(tid)
+            except Exception as e:
+                print_error(f"Failed to sync crypto {pos.name}: {e}")
+                errors += 1
             continue
 
         if pos.isin in existing_by_isin:
