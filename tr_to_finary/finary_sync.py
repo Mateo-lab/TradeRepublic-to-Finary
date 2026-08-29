@@ -91,6 +91,7 @@ def sync_positions_to_finary(
             get_holdings_account_per_name_or_id,
             add_holdings_account,
         )
+        from finary_uapi.institutions import get_institutions
         from finary_uapi.securities import guess_security
         from finary_uapi.user_cryptos import update_user_crypto_by_code
     except ImportError:
@@ -110,7 +111,14 @@ def sync_positions_to_finary(
     account = get_holdings_account_per_name_or_id(session, account_name)
     if not account:
         print_info(f"Creating account '{account_name}'...")
-        result = add_holdings_account(session, account_name, "stocks")
+        institution = {}
+        institutions = get_institutions(session, "Trade Republic")
+        if institutions and "result" in institutions:
+            # Filter for exact match, prefer the canonical slug without UUID
+            exact = [i for i in institutions["result"] if i.get("name") == "Trade Republic"]
+            if exact:
+                institution = next((i for i in exact if i.get("slug") == "trade-republic"), exact[0])
+        result = add_holdings_account(session, account_name, "stocks", institution=institution)
         account = result.get("result", result)
 
     account_id = account["id"]

@@ -280,6 +280,7 @@ async def api_sync(body: dict = {}):
         from finary_uapi.user_holdings_accounts import (
             get_holdings_account_per_name_or_id, add_holdings_account,
         )
+        from finary_uapi.institutions import get_institutions
         from finary_uapi.securities import guess_security
         from finary_uapi.user_cryptos import update_user_crypto_by_code
     except ImportError:
@@ -315,7 +316,13 @@ async def api_sync(body: dict = {}):
     account = get_holdings_account_per_name_or_id(session, account_name)
     if not account:
         logs.append(f"[INFO] Creating account '{account_name}'...")
-        result = add_holdings_account(session, account_name, "stocks")
+        institution = {}
+        institutions_result = get_institutions(session, "Trade Republic")
+        if institutions_result and "result" in institutions_result:
+            exact = [i for i in institutions_result["result"] if i.get("name") == "Trade Republic"]
+            if exact:
+                institution = next((i for i in exact if i.get("slug") == "trade-republic"), exact[0])
+        result = add_holdings_account(session, account_name, "stocks", institution=institution)
         account = result.get("result", result)
 
     account_id = account["id"]
