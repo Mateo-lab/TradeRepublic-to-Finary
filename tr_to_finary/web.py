@@ -100,8 +100,7 @@ async def page_dashboard(request: Request):
     total_invested = sum(p.total_invested for p in positions)
     total_dividends = sum(p.total_dividends for p in positions)
 
-    return templates.TemplateResponse("dashboard.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "dashboard.html", context={
         "page": "dashboard",
         "positions": positions,
         "total_invested": total_invested,
@@ -111,8 +110,7 @@ async def page_dashboard(request: Request):
 
 @app.get("/sync", response_class=HTMLResponse)
 async def page_sync(request: Request):
-    return templates.TemplateResponse("sync.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "sync.html", context={
         "page": "sync",
     })
 
@@ -140,8 +138,7 @@ async def page_transactions(request: Request, filter: str = "all"):
     else:
         display = transactions
 
-    return templates.TemplateResponse("transactions.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "transactions.html", context={
         "page": "transactions",
         "transactions": display,
         "filter": filter,
@@ -151,8 +148,7 @@ async def page_transactions(request: Request, filter: str = "all"):
 
 @app.get("/settings", response_class=HTMLResponse)
 async def page_settings(request: Request):
-    return templates.TemplateResponse("settings.html", {
-        "request": request,
+    return templates.TemplateResponse(request, "settings.html", context={
         "page": "settings",
     })
 
